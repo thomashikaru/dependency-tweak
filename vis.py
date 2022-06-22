@@ -39,6 +39,9 @@ deps = [
     "xcomp",
 ]
 
+N_DEPS = 28
+N_COLS = 7
+
 example = """1	The	the	DET	DEF	Definite=Def|PronType=Art	2	det	_	_
 2	danger	danger	NOUN	SG-NOM	Number=Sing	8	nsubj	_	_
 3	to	to	ADP	_	_	4	case	_	_
@@ -102,25 +105,35 @@ sentence = corpus_iterator_funchead.reverse_content_head(sentence)
 # where to display parse tree (create it but populate it later, after sliders)
 treebox = st.container()
 
-# sliders for changing the grammar
-col1, _, col2, _ = st.columns(4)
-with col1:
-    st.header("Dependency-Head Weights")
+# sliders for dh weights
+st.header("Dependent-Head Weights")
+st.caption(
+    "A positive weight for a given relation means that the dependent will occur before the head in linear order."
+)
+dhcols = st.columns(N_COLS)
+for i, dhcol in enumerate(dhcols):
+    with dhcol:
+        slider_vals = {}
+        for dep in deps[N_DEPS * i // N_COLS : N_DEPS * (i + 1) // N_COLS]:
+            if dep in dh_weights:
+                dh_weights[dep] = st.slider(
+                    dep, -1.0, 1.0, dh_weights[dep], key="dh" + dep
+                )
 
-    slider_vals = {}
-    for dep in deps:
-        if dep in dh_weights:
-            dh_weights[dep] = st.slider(dep, -1.0, 1.0, dh_weights[dep], key="dh" + dep)
-
-with col2:
-    st.header("Distance Weights")
-
-    slider_vals = {}
-    for dep in deps:
-        if dep in distance_weights:
-            distance_weights[dep] = st.slider(
-                dep, -1.0, 1.0, distance_weights[dep], key="dist" + dep
-            )
+# sliders for distance weights
+st.header("Distance Weights")
+st.caption(
+    "For dependents on the same side of a head, those with higher weights will be placed farther from the head in linear order."
+)
+distcols = st.columns(N_COLS)
+for i, distcol in enumerate(distcols):
+    with distcol:
+        slider_vals = {}
+        for dep in deps[N_DEPS * i // N_COLS : N_DEPS * (i + 1) // N_COLS]:
+            if dep in distance_weights:
+                distance_weights[dep] = st.slider(
+                    dep, -1.0, 1.0, distance_weights[dep], key="dist" + dep
+                )
 
 # update the treebox
 with treebox:
