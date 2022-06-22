@@ -110,7 +110,7 @@ with col1:
     slider_vals = {}
     for dep in deps:
         if dep in dh_weights:
-            dh_weights[dep] = st.slider(dep, -1.0, 1.0, dh_weights[dep])
+            dh_weights[dep] = st.slider(dep, -1.0, 1.0, dh_weights[dep], key="dh" + dep)
 
 with col2:
     st.header("Distance Weights")
@@ -118,7 +118,9 @@ with col2:
     slider_vals = {}
     for dep in deps:
         if dep in distance_weights:
-            distance_weights[dep] = st.slider(dep, -1.0, 1.0, distance_weights[dep])
+            distance_weights[dep] = st.slider(
+                dep, -1.0, 1.0, distance_weights[dep], key="dist" + dep
+            )
 
 # update the treebox
 with treebox:
