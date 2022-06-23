@@ -4,6 +4,7 @@ import corpus_iterator
 import corpus_iterator_funchead
 from apply_counterfactual_grammar import orderSentence
 import random
+from math import ceil
 
 # set wide layout
 st.set_page_config(layout="wide")
@@ -59,6 +60,16 @@ example = """1	The	the	DET	DEF	Definite=Def|PronType=Art	2	det	_	_
 15	Sigismund	Sigismund	NOUN	SG-NOM	Number=Sing	11	obl	_	_
 16	;	;	PUNCT	SemiColon	_	8	punct	_	_"""
 
+
+def verify_input(text):
+    lines = text.split("\n")
+    lines = filter(lambda x: not x.startswith("#"), lines)
+    for line in lines:
+        if len(line.split("\t")) != 10:
+            return False
+    return True
+
+
 # convert sentence from Michael's format to displaCy render (manual) format
 def convert_sentence(sentence):
     words, arcs = [], []
@@ -97,10 +108,25 @@ st.header("Original Parse")
 text = st.text_area("Enter text in CoNLL format:", value=example, height=400)
 text = text.strip()
 
+if not verify_input(text):
+    st.error(
+        "The input text is not formatted correctly. A default text will be used instead."
+    )
+    text = example
+
+
 # get the sentence
 corpus = corpus_iterator.CorpusIterator("", "English")
 sentence, newdoc = corpus.processSentence(text)
-sentence = corpus_iterator_funchead.reverse_content_head(sentence)
+
+try:
+    sentence = corpus_iterator_funchead.reverse_content_head(sentence)
+except IndexError:
+    st.error(
+        "Something went wrong (probably a problem with the input formatting). Using a default sentence instead."
+    )
+    sentence, newdoc = corpus.processSentence(example)
+    sentence = corpus_iterator_funchead.reverse_content_head(sentence)
 
 # where to display parse tree (create it but populate it later, after sliders)
 treebox = st.container()
@@ -111,14 +137,17 @@ st.caption(
     "A positive weight for a given relation means that the dependent will occur before the head in linear order."
 )
 dhcols = st.columns(N_COLS)
+n_rows = ceil(N_DEPS / N_COLS)
+start = 0
 for i, dhcol in enumerate(dhcols):
     with dhcol:
         slider_vals = {}
-        for dep in deps[N_DEPS * i // N_COLS : N_DEPS * (i + 1) // N_COLS]:
+        for dep in deps[start : min(start + n_rows, N_DEPS)]:
             if dep in dh_weights:
                 dh_weights[dep] = st.slider(
                     dep, -1.0, 1.0, dh_weights[dep], key="dh" + dep
                 )
+        start += n_rows
 
 # sliders for distance weights
 st.header("Distance Weights")
@@ -126,19 +155,26 @@ st.caption(
     "For dependents on the same side of a head, those with higher weights will be placed farther from the head in linear order."
 )
 distcols = st.columns(N_COLS)
+start = 0
 for i, distcol in enumerate(distcols):
     with distcol:
         slider_vals = {}
-        for dep in deps[N_DEPS * i // N_COLS : N_DEPS * (i + 1) // N_COLS]:
+        for dep in deps[start : min(start + n_rows, N_DEPS)]:
             if dep in distance_weights:
                 distance_weights[dep] = st.slider(
                     dep, -1.0, 1.0, distance_weights[dep], key="dist" + dep
                 )
+        start += n_rows
 
 # update the treebox
 with treebox:
-    sentence = orderSentence(sentence, "RANDOM", dh_weights, distance_weights)
-    for i, s in enumerate(sentence):
-        s["index"] = i + 1
-    data = convert_sentence(sentence)
-    visualize_parser(data, manual=True)
+    try:
+        sentence = orderSentence(sentence, "RANDOM", dh_weights, distance_weights)
+        for i, s in enumerate(sentence):
+            s["index"] = i + 1
+        data = convert_sentence(sentence)
+        visualize_parser(data, manual=True)
+    except IndexError:
+        st.error(
+            "Something went wrong (probably a problem with the input formatting). Please try reloading the page."
+        )
