@@ -5,12 +5,11 @@
 # Adapted by: Thomas Hikaru Clark (thclark@mit.edu)
 
 from corpus_iterator import CorpusIterator
-import copy
 import sys
 import json
 
 
-def reverse_content_head(sentence):
+def reverse_content_head(sentence, validate=True):
     """Apply dependency parse convention change (deviation from vanilla UD)
 
     Args:
@@ -20,7 +19,6 @@ def reverse_content_head(sentence):
     Returns:
         List[Dict[str,int]]: same format as input
     """
-    # sentence_orig = copy.deepcopy(sentence)
     CH_CONVERSION_ORDER = ["cc", "case", "cop", "mark"]
     # find paths that should be reverted
     for dep in CH_CONVERSION_ORDER:
@@ -42,28 +40,32 @@ def reverse_content_head(sentence):
     # make sure none of the original dependency relations remain
     for i in range(len(sentence)):
         if sentence[i]["dep"] in CH_CONVERSION_ORDER:
-            sys.stderr.write(json.dumps(sentence, indent=4))
-            sys.stderr.write("\n")
+            if validate:
+                sys.stderr.write(json.dumps(sentence))
+                sys.stderr.write("\n")
             return None
 
     return sentence
 
 
 class CorpusIteratorFuncHead:
-    def __init__(self, filename, language, partition="train", storeMorph=False):
+    def __init__(
+        self, filename, language, partition="train", storeMorph=False, validate=True
+    ):
         self.basis = CorpusIterator(
             filename, language, partition=partition, storeMorph=storeMorph,
         )
+        self.validate = validate
 
     def iterator(self, rejectShortSentences=False):
         iterator = self.basis.iterator(rejectShortSentences=rejectShortSentences)
         for sentence, newdoc in iterator:
-            r = reverse_content_head(sentence)
+            r = reverse_content_head(sentence, validate=self.validate)
             if r is None:
                 continue
             yield sentence, newdoc
 
     def getSentence(self, index):
         sentence, newdoc = self.basis.getSentence(index)
-        return reverse_content_head(sentence), newdoc
+        return reverse_content_head(sentence, validate=self.validate), newdoc
 
