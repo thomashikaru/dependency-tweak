@@ -14,11 +14,13 @@ import random
 import argparse
 import os
 import pandas as pd
+import numpy as np
 import torch
 import torch.nn.functional
 from torch.autograd import Variable
 from corpus_iterator_funchead import CorpusIteratorFuncHead
 import json
+from iso_639 import lang_codes
 
 recursionlimit = sys.getrecursionlimit()
 sys.setrecursionlimit(min(4000, 2 * recursionlimit))
@@ -99,7 +101,7 @@ def orderSentence(sentence, model, dhWeights, distanceWeights, debug=False):
     root = None
 
     # for factual ordering, some items will be eliminated (punctuation)
-    if model == "REAL_REAL":
+    if model == "REAL_REAL" or model == "REVERSE":
         eliminated = []
 
     # iterate over lines in the parse (i.e. over words in the sentence)
@@ -116,7 +118,7 @@ def orderSentence(sentence, model, dhWeights, distanceWeights, debug=False):
         # for factual ordering, add punctuation to list of items to be eliminated
         # assumes that punctuation does not have non-punctuation dependents!
         if line["coarse_dep"].startswith("punct"):
-            if model == "REAL_REAL":
+            if model == "REAL_REAL" or model == "REVERSE":
                 eliminated.append(line)
             continue
 
@@ -125,14 +127,18 @@ def orderSentence(sentence, model, dhWeights, distanceWeights, debug=False):
         line["dependency_key"] = key
 
         # set the dependent-head directionality based on dhWeights
-        direction = "DH" if (model == "REAL_REAL" or dhWeights.get(key) > 0) else "HD"
+        direction = (
+            "DH"
+            if model == "REAL_REAL" or model == "REVERSE" or dhWeights.get(key) > 0
+            else "HD"
+        )
         headIndex = line["head"] - 1
         sentence[headIndex]["children_" + direction] = sentence[headIndex].get(
             "children_" + direction, []
         ) + [line["index"]]
 
     # for factual ordering, handle eliminations
-    if model == "REAL_REAL":
+    if model == "REAL_REAL" or model == "REVERSE":
         while len(eliminated) > 0:
             line = eliminated[0]
             del eliminated[0]
@@ -147,7 +153,11 @@ def orderSentence(sentence, model, dhWeights, distanceWeights, debug=False):
                 eliminated = eliminated + [sentence[x - 1] for x in line["children_HD"]]
 
         # a sentence is a list of dicts; filter out dicts that were removed
-        linearized = filter(lambda x: "removed" not in x, sentence)
+        linearized = list(filter(lambda x: "removed" not in x, sentence))
+
+        # handle REVERSE
+        if model == "REVERSE":
+            linearized = linearized[::-1]
 
     # for other orderings, order children relatively
     else:
@@ -210,6 +220,7 @@ def get_model_specs(args):
     # a) RANDOM grammar
     # b) REAL_REAL, meaning the factual order
     # c) an optimized grammar from a grammar file
+    # d) REVERSE - mirror image version of REAL_REAL
 
     # handle the grammar specification and populate the dhWeights and distanceWeights dicts
     if args.model.startswith("RANDOM"):  # a random ordering
@@ -227,13 +238,13 @@ def get_model_specs(args):
             distanceWeights[x] = random.random() - 0.5
         sys.stderr.write("dhWeights\n" + json.dumps(dhWeights) + "\n")
         sys.stderr.write("distanceWeights\n" + json.dumps(distanceWeights) + "\n")
-    elif args.model == "REAL_REAL":
+    elif args.model == "REAL_REAL" or args.model == "REVERSE":
         pass
     else:
         # if model is not REAL_REAL or RANDOM-[0-9]+, it should be numeric ID
         if not args.model.isnumeric():
             raise ValueError(
-                f"Model must be REAL_REAL, RANDOM*, or numeric, but got {args.model}"
+                f"Model must be REAL_REAL, RANDOM*, REVERSE, or numeric, but got {args.model}"
             )
 
         # load two sets of grammars - optimized, and approximations to real grammars
@@ -268,6 +279,47 @@ def get_model_specs(args):
     return dhWeights, distanceWeights
 
 
+def get_dl(sentence):
+    """Returns the summed dependency lengths for a sentence.
+
+    Args:
+        sentence (list[dict[str,any]]): sentence
+
+    Returns:
+        int: total dependency length of sentence
+    """
+    dl = 0
+    # print("\n".join("\t".join(str(x) for x in word.values()) for word in sentence))
+    for i, word in enumerate(sentence):
+        if word["head"] == 0 or word["dep"] == "root":
+            continue
+        if "reordered_head" in word:
+            dl += abs(word["reordered_head"] - (i + 1))
+        else:
+            dl += abs(word["head"] - (i + 1))
+    return dl
+
+
+def convert_real(sentence):
+    """Adds a new field 'reordered_head' to a sentence object that maps the
+    old head values to the 1-indexed indices of word positions in the sentence.
+
+    Args:
+        sentence (list[dict[str,any]]): sentence
+    """
+    mapping = dict((word["index"], i + 1) for i, word in enumerate(sentence))
+    for word in sentence:
+        if word["head"] != 0:
+            word["reordered_head"] = mapping[word["head"]]
+
+
+def convert_reverse(sentence):
+    mapping = dict((word["index"], i + 1) for i, word in enumerate(sentence))
+    for word in sentence:
+        if word["head"] != 0:
+            word["reordered_head"] = mapping[word["head"]]
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -295,10 +347,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "--seed", help="random seed for making RANDOM grammars", type=int, default=1
     )
+    parser.add_argument(
+        "--output_dl_only",
+        action="store_true",
+        help="if set, will only output avg dependency length for a dataset/grammar",
+    )
     args = parser.parse_args()
+
+    if not (args.language in lang_codes.keys() or args.language in lang_codes.values()):
+        raise ValueError(f"Specified language is invalid: {args.language}")
+    if args.language in lang_codes.keys():
+        args.language = lang_codes[args.language]
 
     random.seed(args.seed)
     dhWeights, distanceWeights = get_model_specs(args)
+
+    dep_lens = []
+    sent_lens = []
 
     # load and iterate over a corpus
     corpus = CorpusIteratorFuncHead(
@@ -306,13 +371,27 @@ if __name__ == "__main__":
     )
     corpusIterator = corpus.iterator()
     for i, (sentence, newdoc) in enumerate(corpusIterator):
-        ordered = orderSentence(sentence, args.model, dhWeights, distanceWeights)
-        output = " ".join(list(map(lambda x: x["word"], ordered)))
+        ordered = list(orderSentence(sentence, args.model, dhWeights, distanceWeights))
 
-        # Add a new line if the just-processed sentence starts a new document
-        if newdoc and i != 0:
-            sys.stdout.write("\n")
+        if args.output_dl_only:
+            if args.model == "REAL_REAL":
+                convert_real(ordered)
+            if args.model == "REVERSE":
+                convert_reverse(ordered)
+            dep_lens.append(get_dl(ordered))
+            sent_lens.append(len(ordered))
+        else:
+            output = " ".join(list(map(lambda x: x["word"], ordered)))
 
-        sys.stdout.write(output)
-        sys.stdout.write(" . ")  # add a period after every sentence
+            # Add a new line if the just-processed sentence starts a new document
+            if newdoc and i != 0:
+                sys.stdout.write("\n")
+
+            sys.stdout.write(output)
+            sys.stdout.write(" . ")  # add a period after every sentence
+
+    if args.output_dl_only:
+        sys.stdout.write(f"Language: {args.language}, Model: {args.model}\n")
+        sys.stdout.write(f"Avg Sentence Length: {np.mean(sent_lens)}\n")
+        sys.stdout.write(f"Avg Dependency Length: {np.mean(dep_lens)}\n")
 
