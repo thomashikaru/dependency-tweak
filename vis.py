@@ -83,10 +83,10 @@ def convert_sentence(sentence):
         idx, head = int(word["index"]), int(word["reordered_head"])
         if head == 0:
             continue
-        dir = "right"
+        dir = "left"
         if idx > head:
             idx, head = head, idx
-            dir = "left"
+            dir = "right"
         arcs.append(
             {"start": idx - 1, "end": head - 1, "label": word["dep"], "dir": dir,}
         )
