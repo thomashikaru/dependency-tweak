@@ -110,7 +110,11 @@ st.title("Counterfactual Grammar Visualization")
 
 # input original parse (includes default example)
 st.header("Original Parse")
-text = st.text_area("Enter text in CoNLL format:", value=example, height=400)
+text = st.text_area(
+    "Enter text in CoNLL format (hint: use https://lindat.mff.cuni.cz/services/udpipe/ to get a parse for a sentence)",
+    value=example,
+    height=400,
+)
 text = text.strip()
 
 if not verify_input(text):
